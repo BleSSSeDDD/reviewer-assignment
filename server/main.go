@@ -14,7 +14,7 @@ import (
 	"log"
 	"net/http"
 
-	openapi "github.com/BleSSSeDDD/reviewer-assignment/generated/go"
+	openapi "github.com/BleSSSeDDD/reviewer-assignment/server/generated/go"
 )
 
 func main() {
