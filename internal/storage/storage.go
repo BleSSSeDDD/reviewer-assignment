@@ -69,3 +69,60 @@ func CreateUser(user_id, user_name string, is_active bool) error {
 	)
 	return err
 }
+
+// принимает айди юзера и имя команды, возвращает ошибку
+func AddUserToTeam(userID, teamName string) error {
+	if db == nil {
+		db, dbOpenErr = InitDB()
+		if dbOpenErr != nil {
+			return dbOpenErr
+		}
+	}
+
+	_, err := db.Exec("INSERT INTO members_of_teams (user_id, team_name) VALUES ($1, $2)", userID, teamName)
+	return err
+}
+
+// принимает айди юзера, возвращает ошибку и название его команды
+func GetUserTeam(userID string) (string, error) {
+	if db == nil {
+		db, dbOpenErr = InitDB()
+		if dbOpenErr != nil {
+			return "", dbOpenErr
+		}
+	}
+
+	var teamName string
+	err := db.QueryRow("SELECT team_name FROM members_of_teams WHERE user_id = $1", userID).Scan(&teamName)
+	return teamName, err
+}
+
+// GetActiveTeamMembers - возвращает активных пользователей команды (исключая указанного)
+func GetActiveTeamMembers(teamName, excludeUserID string) ([]string, error) {
+	if db == nil {
+		db, dbOpenErr = InitDB()
+		if dbOpenErr != nil {
+			return nil, dbOpenErr
+		}
+	}
+
+	rows, err := db.Query(`
+		SELECT u.user_id FROM users u
+		JOIN members_of_teams m ON u.user_id = m.user_id
+		WHERE m.team_name = $1 AND u.is_active = true AND u.user_id != $2
+	`, teamName, excludeUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var userIDs []string
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, userID)
+	}
+	return userIDs, nil
+}

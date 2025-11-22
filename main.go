@@ -14,7 +14,7 @@ import (
 	"log"
 	"net/http"
 
-	server "github.com/GIT_USER_ID/GIT_REPO_ID/go"
+	server "github.com/GIT_USER_ID/GIT_REPO_ID/generated/go"
 )
 
 func main() {
