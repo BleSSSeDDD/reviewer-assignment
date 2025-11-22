@@ -31,5 +31,3 @@ go.work.sum
 # .idea/
 # .vscode/
 
-server/.openapi-generator/
-server/.openapi-generator-ignore
