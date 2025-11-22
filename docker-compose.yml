@@ -19,7 +19,7 @@ services:
 
   app:
     build: 
-      context: ./server
+      context: ./
       dockerfile: Dockerfile
     container_name: reviewer-app
     ports:
