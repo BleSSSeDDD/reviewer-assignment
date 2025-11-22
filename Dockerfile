@@ -1,9 +1,6 @@
 FROM golang:1.25.3 AS build
 WORKDIR /go/src
-COPY go ./go
-COPY main.go .
-COPY go.sum .
-COPY go.mod .
+COPY . ./
 
 # чтобы не было зависимостей от Си-библиотек в конечном бинарнике,
 # потому что их не будет в контейнере FROM scratch
