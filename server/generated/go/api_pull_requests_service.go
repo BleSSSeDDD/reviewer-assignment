@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math/rand"
+	"strings"
 
 	"github.com/BleSSSeDDD/reviewer-assignment/server/internal/storage"
 )
@@ -80,12 +81,31 @@ func (s *PullRequestsAPIService) PullRequestCreatePost(ctx context.Context, pull
 		pullRequestCreatePostRequest.AuthorId,
 	)
 	if err != nil {
-		return Response(409, ErrorResponse{
-			Error: ErrorResponseError{
-				Code:    "PullRequest_EXISTS",
-				Message: "PullRequest id already exists",
-			},
-		}), nil
+		if strings.Contains(err.Error(), "duplicate key") {
+			return Response(409, ErrorResponse{
+				Error: ErrorResponseError{
+					Code:    "PR_EXISTS",
+					Message: "PullRequest id already exists",
+				},
+			}), nil
+		}
+		if strings.Contains(err.Error(), "value too long") {
+			return Response(400, ErrorResponse{
+				Error: ErrorResponseError{
+					Code:    "VALUE_TOO_LONG",
+					Message: "PR id or title too long, check maximum length limits",
+				},
+			}), nil
+		}
+		if strings.Contains(err.Error(), "violates foreign key constraint") {
+			return Response(404, ErrorResponse{
+				Error: ErrorResponseError{
+					Code:    "AUTHOR_NOT_FOUND",
+					Message: "author not found",
+				},
+			}), nil
+		}
+		return Response(500, nil), err
 	}
 
 	var assignedReviewerIds []string
@@ -226,7 +246,7 @@ func (s *PullRequestsAPIService) PullRequestReassignPost(ctx context.Context, pu
 	if storagePullRequest.Status == "MERGED" {
 		return Response(409, ErrorResponse{
 			Error: ErrorResponseError{
-				Code:    "PullRequest_MERGED",
+				Code:    "PR_MERGED",
 				Message: "cannot reassign on merged PullRequest",
 			},
 		}), nil

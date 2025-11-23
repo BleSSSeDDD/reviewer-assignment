@@ -3,23 +3,19 @@ package openapi
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"github.com/BleSSSeDDD/reviewer-assignment/server/internal/storage"
 )
 
-// UsersAPIService is a service that implements the logic for the UsersAPIServicer
-// This service should implement the business logic for every endpoint for the UsersAPI API.
-// Include any external packages or services that will be required by this service.
 type UsersAPIService struct {
 	db *sql.DB
 }
 
-// NewUsersAPIService creates a default api service
 func NewUsersAPIService(db *sql.DB) *UsersAPIService {
 	return &UsersAPIService{db: db}
 }
 
-// UsersSetIsActivePost - Установить флаг активности пользователя
 func (s *UsersAPIService) UsersSetIsActivePost(ctx context.Context, req UsersSetIsActivePostRequest) (ImplResponse, error) {
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -39,6 +35,14 @@ func (s *UsersAPIService) UsersSetIsActivePost(ctx context.Context, req UsersSet
 
 	err = storage.CreateOrUpdateUser(ctx, transaction, req.UserId, storageUser.Username, req.IsActive)
 	if err != nil {
+		if strings.Contains(err.Error(), "value too long") {
+			return Response(400, ErrorResponse{
+				Error: ErrorResponseError{
+					Code:    "VALUE_TOO_LONG",
+					Message: "user_id too long, maximum 100 characters",
+				},
+			}), nil
+		}
 		return Response(500, nil), err
 	}
 
@@ -64,7 +68,6 @@ func (s *UsersAPIService) UsersSetIsActivePost(ctx context.Context, req UsersSet
 	}), nil
 }
 
-// UsersGetReviewGet - Получить PR'ы, где пользователь назначен ревьювером
 func (s *UsersAPIService) UsersGetReviewGet(ctx context.Context, userId string) (ImplResponse, error) {
 	storagePullRequests, err := storage.GetUserReviewPRs(ctx, s.db, userId)
 	if err != nil {
