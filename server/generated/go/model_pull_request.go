@@ -10,15 +10,11 @@
 
 package openapi
 
-
 import (
 	"time"
 )
 
-
-
 type PullRequest struct {
-
 	PullRequestId string `json:"pull_request_id"`
 
 	PullRequestName string `json:"pull_request_name"`
@@ -38,10 +34,10 @@ type PullRequest struct {
 // AssertPullRequestRequired checks if the required fields are not zero-ed
 func AssertPullRequestRequired(obj PullRequest) error {
 	elements := map[string]interface{}{
-		"pull_request_id": obj.PullRequestId,
-		"pull_request_name": obj.PullRequestName,
-		"author_id": obj.AuthorId,
-		"status": obj.Status,
+		"pull_request_id":    obj.PullRequestId,
+		"pull_request_name":  obj.PullRequestName,
+		"author_id":          obj.AuthorId,
+		"status":             obj.Status,
 		"assigned_reviewers": obj.AssignedReviewers,
 	}
 	for name, el := range elements {

@@ -28,7 +28,6 @@ func setupRouter(db *sql.DB) http.Handler {
 }
 
 func main() {
-
 	var db *sql.DB
 	var err error
 	for i := 0; i < 5; i++ {

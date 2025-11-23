@@ -20,7 +20,9 @@ CREATE TABLE pull_requests(
     request_id VARCHAR(100) PRIMARY KEY,
     title VARCHAR(500) NOT NULL,
     user_id VARCHAR(100) REFERENCES users(user_id), 
-    status VARCHAR(6) CHECK (status IN ('OPEN', 'MERGED')) DEFAULT 'OPEN'
+    status VARCHAR(6) CHECK (status IN ('OPEN', 'MERGED')) DEFAULT 'OPEN',
+    created_at TIMESTAMP DEFAULT NOW(),
+    merged_at TIMESTAMP
 );
 
 -- связывает пулл реквесты с ревьюервами
@@ -31,3 +33,4 @@ CREATE TABLE pull_requests_reviewers(
     reviewer_id VARCHAR(100) REFERENCES users(user_id),
     PRIMARY KEY (request_id, reviewer_id)
 );
+
