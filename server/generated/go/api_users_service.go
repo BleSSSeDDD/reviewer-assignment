@@ -3,8 +3,8 @@ package openapi
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"net/http"
+
+	"github.com/BleSSSeDDD/reviewer-assignment/server/internal/storage"
 )
 
 // UsersAPIService is a service that implements the logic for the UsersAPIServicer
@@ -19,27 +19,69 @@ func NewUsersAPIService(db *sql.DB) *UsersAPIService {
 	return &UsersAPIService{db: db}
 }
 
-// UsersSetIsActivePost - Установить флаг активности пользователя
-func (s *UsersAPIService) UsersSetIsActivePost(ctx context.Context, usersSetIsActivePostRequest UsersSetIsActivePostRequest) (ImplResponse, error) {
-	// TODO - update UsersSetIsActivePost with the required logic for this service method.
-	// Add api_users_service.go to the .openapi-generator-ignore to avoid overwriting this service implementation when updating open api generation.
+// получает юзера из бд, если его нет то 404, если он есть, то обновляем is_active,
+// потом получаем обновленную версию и отдаем в хендлер, причем надо конвертировать,
+// потому что в сторедже своя структура под него
+func (s *UsersAPIService) UsersSetIsActivePost(ctx context.Context, req UsersSetIsActivePostRequest) (ImplResponse, error) {
+	storageUser, err := storage.GetUser(ctx, s.db, req.UserId)
+	if err != nil {
+		return Response(404, ErrorResponse{
+			Error: ErrorResponseError{
+				Code:    "NOT_FOUND",
+				Message: "user not found",
+			},
+		}), nil
+	}
 
-	// TODO: Uncomment the next line to return response Response(200, UsersSetIsActivePost200Response{}) or use other options such as http.Ok ...
-	// return Response(200, UsersSetIsActivePost200Response{}), nil
+	err = storage.CreateOrUpdateUser(ctx, s.db, req.UserId, storageUser.Username, req.IsActive)
+	if err != nil {
+		return Response(500, nil), err
+	}
 
-	// TODO: Uncomment the next line to return response Response(404, ErrorResponse{}) or use other options such as http.Ok ...
-	// return Response(404, ErrorResponse{}), nil
+	updatedStorageUser, _ := storage.GetUser(ctx, s.db, req.UserId)
 
-	return Response(http.StatusNotImplemented, nil), errors.New("UsersSetIsActivePost method not implemented")
+	updatedUser := User{
+		UserId:   updatedStorageUser.UserId,
+		Username: updatedStorageUser.Username,
+		IsActive: updatedStorageUser.IsActive,
+		TeamName: updatedStorageUser.TeamName,
+	}
+
+	return Response(200, UsersSetIsActivePost200Response{
+		User: updatedUser,
+	}), nil
 }
 
-// UsersGetReviewGet - Получить PR&#39;ы, где пользователь назначен ревьювером
+// проверяем что юзер вообще существует, получает слайс структур пулреквеста на уровне бд, где этот юзер ревьювер,
+// потом их конвертирует в нормальную структуру и отдает наверх
 func (s *UsersAPIService) UsersGetReviewGet(ctx context.Context, userId string) (ImplResponse, error) {
-	// TODO - update UsersGetReviewGet with the required logic for this service method.
-	// Add api_users_service.go to the .openapi-generator-ignore to avoid overwriting this service implementation when updating open api generation.
+	_, err := storage.GetUser(ctx, s.db, userId)
+	if err != nil {
+		return Response(404, ErrorResponse{
+			Error: ErrorResponseError{
+				Code:    "NOT_FOUND",
+				Message: "user not found",
+			},
+		}), nil
+	}
 
-	// TODO: Uncomment the next line to return response Response(200, UsersGetReviewGet200Response{}) or use other options such as http.Ok ...
-	// return Response(200, UsersGetReviewGet200Response{}), nil
+	storagePRs, err := storage.GetUserReviewPRs(ctx, s.db, userId)
+	if err != nil {
+		return Response(500, nil), err
+	}
 
-	return Response(http.StatusNotImplemented, nil), errors.New("UsersGetReviewGet method not implemented")
+	var openapiPRs []PullRequestShort
+	for _, storagePR := range storagePRs {
+		openapiPRs = append(openapiPRs, PullRequestShort{
+			PullRequestId:   storagePR.PullRequestId,
+			PullRequestName: storagePR.PullRequestName,
+			AuthorId:        storagePR.AuthorId,
+			Status:          storagePR.Status,
+		})
+	}
+
+	return Response(200, UsersGetReviewGet200Response{
+		UserId:       userId,
+		PullRequests: openapiPRs,
+	}), nil
 }
