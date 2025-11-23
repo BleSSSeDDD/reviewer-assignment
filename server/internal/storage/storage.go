@@ -54,10 +54,10 @@ func InitDB() (db *sql.DB, err error) {
 }
 
 // получает юзера по айди, если его нет то вернет ошибку
-// team_name берется из members_of_teams, юзер не может быть не в команде
-func GetUser(ctx context.Context, db *sql.DB, userID string) (StorageUser, error) {
+// транзакция потому что мы потом будем его менять и надо чтобы он не изменился пока мы работаем
+func GetUser(ctx context.Context, tx *sql.Tx, userID string) (StorageUser, error) {
 	var user StorageUser
-	err := db.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
         SELECT u.user_id, u.user_name, u.is_active, m.team_name 
         FROM users u
         LEFT JOIN members_of_teams m ON u.user_id = m.user_id
@@ -67,8 +67,9 @@ func GetUser(ctx context.Context, db *sql.DB, userID string) (StorageUser, error
 }
 
 // создает юзера если его нет, либо обновляет если уже есть и нам надо поле isActive поменять
-func CreateOrUpdateUser(ctx context.Context, db *sql.DB, userID, userName string, isActive bool) error {
-	_, err := db.ExecContext(ctx, `
+// транзакция потому что связавно с гетюзером
+func CreateOrUpdateUser(ctx context.Context, tx *sql.Tx, userID, userName string, isActive bool) error {
+	_, err := tx.ExecContext(ctx, `
         INSERT INTO users (user_id, user_name, is_active) 
         VALUES ($1, $2, $3)
         ON CONFLICT (user_id) DO UPDATE SET is_active = EXCLUDED.is_active
@@ -77,6 +78,7 @@ func CreateOrUpdateUser(ctx context.Context, db *sql.DB, userID, userName string
 }
 
 // ищет в бд юзера, потом его пул реквсты и возвращает их слайс и ошибку если что-то пошло не так
+// не транзакция потому что мы просто читаем и ничего не меняем
 func GetUserReviewPRs(ctx context.Context, db *sql.DB, userID string) ([]StoragePullRequest, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT pr.request_id, pr.title, pr.user_id, pr.status
@@ -103,4 +105,49 @@ func GetUserReviewPRs(ctx context.Context, db *sql.DB, userID string) ([]Storage
 	}
 
 	return UserPullRequests, nil
+}
+
+// создает команду если её нет, если есть возвращает ошибку
+// транзакция потому что потом сюда надо добавить юзеров
+func CreateTeam(ctx context.Context, tx *sql.Tx, teamName string) error {
+	_, err := tx.ExecContext(ctx, `
+        INSERT INTO teams (team_name) 
+        VALUES ($1)
+    `, teamName)
+	return err
+}
+
+// добавляет юзера в команду, если уже есть то ошибка
+// транзакция потому что это должно быть атомарным с созданием команды и юзеров
+func AddUserToTeam(ctx context.Context, tx *sql.Tx, userID, teamName string) error {
+	_, err := tx.ExecContext(ctx, `
+        INSERT INTO members_of_teams (user_id, team_name) 
+        VALUES ($1, $2)
+    `, userID, teamName)
+	return err
+}
+
+// получает всех юзеров команды, если команды нет то пустой слайс
+// не транзакция потому что мы просто читаем данные и нам не важно если они потом изменятся
+func GetTeamWithMembers(ctx context.Context, db *sql.DB, teamName string) ([]StorageUser, error) {
+	rows, err := db.QueryContext(ctx, `
+        SELECT u.user_id, u.user_name, u.is_active, m.team_name
+        FROM members_of_teams m
+        JOIN users u ON m.user_id = u.user_id
+        WHERE m.team_name = $1
+    `, teamName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []StorageUser
+	for rows.Next() {
+		var user StorageUser
+		if err := rows.Scan(&user.UserId, &user.Username, &user.IsActive, &user.TeamName); err != nil {
+			return nil, err
+		}
+		members = append(members, user)
+	}
+	return members, nil
 }

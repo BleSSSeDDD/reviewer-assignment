@@ -3,8 +3,8 @@ package openapi
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"net/http"
+
+	"github.com/BleSSSeDDD/reviewer-assignment/server/internal/storage"
 )
 
 // TeamsAPIService is a service that implements the logic for the TeamsAPIServicer
@@ -21,28 +21,66 @@ func NewTeamsAPIService(db *sql.DB) *TeamsAPIService {
 
 // TeamAddPost - Создать команду с участниками (создаёт/обновляет пользователей)
 func (s *TeamsAPIService) TeamAddPost(ctx context.Context, team Team) (ImplResponse, error) {
-	// TODO - update TeamAddPost with the required logic for this service method.
-	// Add api_teams_service.go to the .openapi-generator-ignore to avoid overwriting this service implementation when updating open api generation.
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Response(500, nil), err
+	}
+	defer transaction.Rollback()
 
-	// TODO: Uncomment the next line to return response Response(201, TeamAddPost201Response{}) or use other options such as http.Ok ...
-	// return Response(201, TeamAddPost201Response{}), nil
+	err = storage.CreateTeam(ctx, transaction, team.TeamName)
+	if err != nil {
+		return Response(500, nil), err
+	}
 
-	// TODO: Uncomment the next line to return response Response(400, ErrorResponse{}) or use other options such as http.Ok ...
-	// return Response(400, ErrorResponse{}), nil
+	for _, member := range team.Members {
+		err = storage.CreateOrUpdateUser(ctx, transaction, member.UserId, member.Username, member.IsActive)
+		if err != nil {
+			return Response(500, nil), err
+		}
 
-	return Response(http.StatusNotImplemented, nil), errors.New("TeamAddPost method not implemented")
+		err = storage.AddUserToTeam(ctx, transaction, member.UserId, team.TeamName)
+		if err != nil {
+			return Response(500, nil), err
+		}
+	}
+
+	err = transaction.Commit()
+	if err != nil {
+		return Response(500, nil), err
+	}
+
+	return Response(201, TeamAddPost201Response{
+		Team: team,
+	}), nil
 }
 
 // TeamGetGet - Получить команду с участниками
 func (s *TeamsAPIService) TeamGetGet(ctx context.Context, teamName string) (ImplResponse, error) {
-	// TODO - update TeamGetGet with the required logic for this service method.
-	// Add api_teams_service.go to the .openapi-generator-ignore to avoid overwriting this service implementation when updating open api generation.
+	storageMembers, err := storage.GetTeamWithMembers(ctx, s.db, teamName)
+	if err != nil {
+		return Response(500, nil), err
+	}
 
-	// TODO: Uncomment the next line to return response Response(200, Team{}) or use other options such as http.Ok ...
-	// return Response(200, Team{}), nil
+	if len(storageMembers) == 0 {
+		return Response(404, ErrorResponse{
+			Error: ErrorResponseError{
+				Code:    "NOT_FOUND",
+				Message: "team not found",
+			},
+		}), nil
+	}
 
-	// TODO: Uncomment the next line to return response Response(404, ErrorResponse{}) or use other options such as http.Ok ...
-	// return Response(404, ErrorResponse{}), nil
+	var openapiMembers []TeamMember
+	for _, storageMember := range storageMembers {
+		openapiMembers = append(openapiMembers, TeamMember{
+			UserId:   storageMember.UserId,
+			Username: storageMember.Username,
+			IsActive: storageMember.IsActive,
+		})
+	}
 
-	return Response(http.StatusNotImplemented, nil), errors.New("TeamGetGet method not implemented")
+	return Response(200, Team{
+		TeamName: teamName,
+		Members:  openapiMembers,
+	}), nil
 }

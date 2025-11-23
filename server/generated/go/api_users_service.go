@@ -19,11 +19,15 @@ func NewUsersAPIService(db *sql.DB) *UsersAPIService {
 	return &UsersAPIService{db: db}
 }
 
-// получает юзера из бд, если его нет то 404, если он есть, то обновляем is_active,
-// потом получаем обновленную версию и отдаем в хендлер, причем надо конвертировать,
-// потому что в сторедже своя структура под него
+// UsersSetIsActivePost - Установить флаг активности пользователя
 func (s *UsersAPIService) UsersSetIsActivePost(ctx context.Context, req UsersSetIsActivePostRequest) (ImplResponse, error) {
-	storageUser, err := storage.GetUser(ctx, s.db, req.UserId)
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Response(500, nil), err
+	}
+	defer transaction.Rollback()
+
+	storageUser, err := storage.GetUser(ctx, transaction, req.UserId)
 	if err != nil {
 		return Response(404, ErrorResponse{
 			Error: ErrorResponseError{
@@ -33,12 +37,20 @@ func (s *UsersAPIService) UsersSetIsActivePost(ctx context.Context, req UsersSet
 		}), nil
 	}
 
-	err = storage.CreateOrUpdateUser(ctx, s.db, req.UserId, storageUser.Username, req.IsActive)
+	err = storage.CreateOrUpdateUser(ctx, transaction, req.UserId, storageUser.Username, req.IsActive)
 	if err != nil {
 		return Response(500, nil), err
 	}
 
-	updatedStorageUser, _ := storage.GetUser(ctx, s.db, req.UserId)
+	updatedStorageUser, err := storage.GetUser(ctx, transaction, req.UserId)
+	if err != nil {
+		return Response(500, nil), err
+	}
+
+	err = transaction.Commit()
+	if err != nil {
+		return Response(500, nil), err
+	}
 
 	updatedUser := User{
 		UserId:   updatedStorageUser.UserId,
@@ -52,36 +64,25 @@ func (s *UsersAPIService) UsersSetIsActivePost(ctx context.Context, req UsersSet
 	}), nil
 }
 
-// проверяем что юзер вообще существует, получает слайс структур пулреквеста на уровне бд, где этот юзер ревьювер,
-// потом их конвертирует в нормальную структуру и отдает наверх
+// UsersGetReviewGet - Получить PR'ы, где пользователь назначен ревьювером
 func (s *UsersAPIService) UsersGetReviewGet(ctx context.Context, userId string) (ImplResponse, error) {
-	_, err := storage.GetUser(ctx, s.db, userId)
-	if err != nil {
-		return Response(404, ErrorResponse{
-			Error: ErrorResponseError{
-				Code:    "NOT_FOUND",
-				Message: "user not found",
-			},
-		}), nil
-	}
-
-	storagePRs, err := storage.GetUserReviewPRs(ctx, s.db, userId)
+	storagePullRequests, err := storage.GetUserReviewPRs(ctx, s.db, userId)
 	if err != nil {
 		return Response(500, nil), err
 	}
 
-	var openapiPRs []PullRequestShort
-	for _, storagePR := range storagePRs {
-		openapiPRs = append(openapiPRs, PullRequestShort{
-			PullRequestId:   storagePR.PullRequestId,
-			PullRequestName: storagePR.PullRequestName,
-			AuthorId:        storagePR.AuthorId,
-			Status:          storagePR.Status,
+	var openapiPullRequests []PullRequestShort
+	for _, storagePullRequest := range storagePullRequests {
+		openapiPullRequests = append(openapiPullRequests, PullRequestShort{
+			PullRequestId:   storagePullRequest.PullRequestId,
+			PullRequestName: storagePullRequest.PullRequestName,
+			AuthorId:        storagePullRequest.AuthorId,
+			Status:          storagePullRequest.Status,
 		})
 	}
 
 	return Response(200, UsersGetReviewGet200Response{
 		UserId:       userId,
-		PullRequests: openapiPRs,
+		PullRequests: openapiPullRequests,
 	}), nil
 }
