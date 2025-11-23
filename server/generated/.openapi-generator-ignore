@@ -29,7 +29,6 @@
 git_push.sh
 
 README.md
-docs/
 
 go.mod
 go.sum
