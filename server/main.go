@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"os"
@@ -10,16 +11,17 @@ import (
 	"time"
 
 	openapi "github.com/BleSSSeDDD/reviewer-assignment/server/generated/go"
+	"github.com/BleSSSeDDD/reviewer-assignment/server/internal/storage"
 )
 
-func setupRouter() http.Handler {
-	PullRequestsAPIService := openapi.NewPullRequestsAPIService()
+func setupRouter(db *sql.DB) http.Handler {
+	PullRequestsAPIService := openapi.NewPullRequestsAPIService(db)
 	PullRequestsAPIController := openapi.NewPullRequestsAPIController(PullRequestsAPIService)
 
-	TeamsAPIService := openapi.NewTeamsAPIService()
+	TeamsAPIService := openapi.NewTeamsAPIService(db)
 	TeamsAPIController := openapi.NewTeamsAPIController(TeamsAPIService)
 
-	UsersAPIService := openapi.NewUsersAPIService()
+	UsersAPIService := openapi.NewUsersAPIService(db)
 	UsersAPIController := openapi.NewUsersAPIController(UsersAPIService)
 
 	return openapi.NewRouter(PullRequestsAPIController, TeamsAPIController, UsersAPIController)
@@ -27,8 +29,21 @@ func setupRouter() http.Handler {
 
 func main() {
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	var db *sql.DB
+	var err error
+	for i := 0; i < 5; i++ {
+		db, err = storage.InitDB()
+		if err != nil {
+			log.Printf("Server could not connect to db, retrying...")
+			time.Sleep(1 * time.Second)
+		} else {
+			break
+		}
+	}
+	if err != nil {
+		log.Printf("Server could not connect to db")
+		return
+	}
 
 	stop := make(chan os.Signal, 1)                    // канал для грейсфул шатдауна
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM) // сигтерм для докера
@@ -37,7 +52,7 @@ func main() {
 
 	log.Printf("Server starting")
 
-	router := setupRouter()
+	router := setupRouter(db)
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: router,
@@ -60,7 +75,8 @@ func main() {
 
 	log.Println("Shutting down server...")
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(context.Background()); err != nil {
+		server.Shutdown(context.Background())
 		log.Printf("Shutdown error: %v", err)
 	} else {
 		log.Println("Server stopped gracefully")
