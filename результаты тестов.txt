@@ -1,3 +1,62 @@
-k6-test1.js:
-данные: 20 команд и 200 пользователей, тест 
+k6-test.js:
 
+тест использует заранее созданные данные: 20 команди 200 пользователей
+
+время тестирования: 10 секунд
+
+операцими:
+3 виртуальных пользователя с задержкой 0.2 секунды выполняют случайный запрос:
+
+30% - получение команды 
+30% - получение ревью
+20% - изменение активности пользователя
+20% - мерж PR
+
+результаты:
+- RPS: 7.0
+- latency p95: 6.38ms   
+- ошибки: 0.00% 
+- проверки: 100% успешно 
+
+вывод k6:
+  █ THRESHOLDS
+
+    http_req_duration
+    ✓ 'p(95)<300' p(95)=6.38ms
+
+    http_req_failed
+    ✓ 'rate<0.001' rate=0.00%
+
+    http_reqs
+    ✓ 'rate>5' rate=7.048105/s
+
+
+  █ TOTAL RESULTS
+
+    checks_total.......: 439     7.048105/s
+    checks_succeeded...: 100.00% 439 out of 439
+    checks_failed......: 0.00%   0 out of 439
+
+    ✓ get team
+    ✓ get reviews
+    ✓ merge PR
+    ✓ set active
+
+    HTTP
+    http_req_duration..............: avg=4.47ms   min=2.35ms   med=4.52ms   max=8.64ms   p(90)=6.1ms    p(95)=6.38ms
+      { expected_response:true }...: avg=4.47ms   min=2.35ms   med=4.52ms   max=8.64ms   p(90)=6.1ms    p(95)=6.38ms
+    http_req_failed................: 0.00%  0 out of 439
+    http_reqs......................: 439    7.048105/s
+
+    EXECUTION
+    iteration_duration.............: avg=205.36ms min=202.72ms med=205.47ms max=210.24ms p(90)=207.08ms p(95)=207.38ms
+    iterations.....................: 439    7.048105/s
+    vus............................: 2      min=1        max=2
+    vus_max........................: 3      min=3        max=3
+
+    NETWORK
+    data_received..................: 1.5 MB 24 kB/s
+    data_sent......................: 61 kB  985 B/s
+
+running (1m02.3s), 0/3 VUs, 439 complete and 0 interrupted iterations
+default ✓ [ 100% ] 0/3 VUs  1m0s

@@ -30,14 +30,18 @@ const errMsgMaxValueConstraint = "provided parameter is not respecting maximum v
 
 // Response return a ImplResponse struct filled
 func Response(code int, body interface{}) ImplResponse {
-	return ImplResponse {
+	return ImplResponse{
 		Code: code,
 		Body: body,
 	}
 }
 
 // IsZeroValue checks if the val is the zero-ed value.
+// ТУТ БЫЛ БАГ, если у нас в жсоне приходило isActive false, то функция возвращала тру, потому что фолс это зиро вэлью для була
 func IsZeroValue(val interface{}) bool {
+	if _, isBool := val.(bool); isBool {
+		return false
+	}
 	return val == nil || reflect.DeepEqual(val, reflect.Zero(reflect.TypeOf(val)).Interface())
 }
 
@@ -161,7 +165,7 @@ func readFileHeaderToTempFile(fileHeader *multipart.FileHeader) (*os.File, error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return file, nil
 }
 

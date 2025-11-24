@@ -36,3 +36,21 @@ main.go
 Dockerfile
 
 api_*_service.go
+
+# фикс валидации is_active:false 
+# в сгенерированном коде есть функция:
+#
+# func IsZeroValue(val interface{}) bool {
+#	 if _, isBool := val.(bool); isBool {
+#	 	return false
+#	 }
+#	 return val == nil || reflect.DeepEqual(val, reflect.Zero(reflect.TypeOf(val)).Interface())
+# }
+# для проверки required полей, она возвращала true для false,
+# а false это зиро вэлью для була, поэтому как не пытался отправить false, была ошибка "required field is zero value".
+#
+# в итоге заменена логика валидации, теперь если приходил бул значение, то оно по умолчанию считается не пустым
+# теперь если отправить запрос с пустым полем 
+# поэтому этот файл теперь здесь, чтоб его не перегенерировать случайно
+
+helpers.go
