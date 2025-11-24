@@ -11,6 +11,15 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// интерфейс нужен, потому что мы иногда используем функции вне транзакций, например с функцией
+// TeamGetGet, мы там просто получаем данные и там не нужна транзакция,
+// а иногда используем в контексте транзакции, например в PullRequestCreatePost
+type someSqlQuery interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
 // структура юзера, поля такие же как в бд, чтобы не тащить его структуру со слоя выше
 type StorageUser struct {
 	UserId   string
@@ -56,33 +65,51 @@ func InitDB() (db *sql.DB, err error) {
 	return db, nil
 }
 
+// создает команду если её нет, если есть возвращает ошибку
+func CreateTeam(ctx context.Context, db someSqlQuery, teamName string) error {
+	_, err := db.ExecContext(ctx, `
+        INSERT INTO teams (team_name) 
+        VALUES ($1)
+    `, teamName)
+	return err
+}
+
+// проверяет существует ли команда в таблице teams
+func TeamExists(ctx context.Context, db someSqlQuery, teamName string) (bool, error) {
+	var count int
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM teams WHERE team_name = $1", teamName).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // получает юзера по айди, если его нет то вернет ошибку
-// транзакция потому что мы потом будем его менять и надо чтобы он не изменился пока мы работаем
-func GetUser(ctx context.Context, transaction *sql.Tx, userId string) (StorageUser, error) {
+func GetUser(ctx context.Context, db someSqlQuery, userId string) (StorageUser, error) {
 	var user StorageUser
-	err := transaction.QueryRowContext(ctx, `
-        SELECT users.user_id, users.user_name, users.is_active, members_of_teams.team_name 
+	err := db.QueryRowContext(ctx, `
+        SELECT user_id, user_name, is_active, team_name 
         FROM users 
-        LEFT JOIN members_of_teams ON users.user_id = members_of_teams.user_id
-        WHERE users.user_id = $1
+        WHERE user_id = $1
     `, userId).Scan(&user.UserId, &user.Username, &user.IsActive, &user.TeamName)
 	return user, err
 }
 
-// создает юзера если его нет, либо обновляет если уже есть и нам надо поле isActive поменять
-// транзакция потому что связавно с гетюзером
-func CreateOrUpdateUser(ctx context.Context, transaction *sql.Tx, userId, userName string, isActive bool) error {
-	_, err := transaction.ExecContext(ctx, `
-        INSERT INTO users (user_id, user_name, is_active) 
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id) DO UPDATE SET is_active = EXCLUDED.is_active
-    `, userId, userName, isActive)
+// создает пользователя, если он уже есть, но переназначается в другую команду, то ему можно поменять все поля кроме айди
+func CreateOrUpdateUser(ctx context.Context, db someSqlQuery, userId, userName, teamName string, isActive bool) error {
+	_, err := db.ExecContext(ctx, `
+        INSERT INTO users (user_id, user_name, team_name, is_active) 
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (user_id) DO UPDATE SET 
+            user_name = EXCLUDED.user_name,
+            team_name = EXCLUDED.team_name,
+            is_active = EXCLUDED.is_active
+    `, userId, userName, teamName, isActive)
 	return err
 }
 
-// ищет в бд юзера, потом его пул реквсты и возвращает их слайс и ошибку если что-то пошло не так
-// не транзакция потому что мы просто читаем и ничего не меняем
-func GetUserReviewPRs(ctx context.Context, db *sql.DB, userId string) ([]StoragePullRequest, error) {
+// ищет в бд юзера, потом его пул реквсты и возвращает их слайс и ошибку, если что-то пошло не так
+func GetUserReviewPRs(ctx context.Context, db someSqlQuery, userId string) ([]StoragePullRequest, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT pull_requests.request_id, pull_requests.title, pull_requests.user_id, pull_requests.status, pull_requests.created_at, pull_requests.merged_at
 		FROM pull_requests 
@@ -110,34 +137,12 @@ func GetUserReviewPRs(ctx context.Context, db *sql.DB, userId string) ([]Storage
 	return UserPullRequests, nil
 }
 
-// создает команду если её нет, если есть возвращает ошибку
-// транзакция потому что потом сюда надо добавить юзеров
-func CreateTeam(ctx context.Context, transaction *sql.Tx, teamName string) error {
-	_, err := transaction.ExecContext(ctx, `
-        INSERT INTO teams (team_name) 
-        VALUES ($1)
-    `, teamName)
-	return err
-}
-
-// добавляет юзера в команду, если уже есть то ошибка
-// транзакция потому что это должно быть атомарным с созданием команды и юзеров
-func AddUserToTeam(ctx context.Context, transaction *sql.Tx, userID, teamName string) error {
-	_, err := transaction.ExecContext(ctx, `
-        INSERT INTO members_of_teams (user_id, team_name) 
-        VALUES ($1, $2)
-    `, userID, teamName)
-	return err
-}
-
-// получает всех юзеров команды, если команды нет то пустой слайс
-// не транзакция потому что мы просто читаем данные и нам не важно если они потом изменятся
-func GetTeamWithMembers(ctx context.Context, db *sql.DB, teamName string) ([]StorageUser, error) {
+// получает всех юзеров команды, если пользователей нет, то пустой слайс
+func GetTeamWithMembers(ctx context.Context, db someSqlQuery, teamName string) ([]StorageUser, error) {
 	rows, err := db.QueryContext(ctx, `
-        SELECT users.user_id, users.user_name, users.is_active, members_of_teams.team_name
-        FROM members_of_teams 
-        JOIN users ON members_of_teams.user_id = users.user_id
-        WHERE members_of_teams.team_name = $1
+        SELECT user_id, user_name, is_active, team_name
+        FROM users 
+        WHERE team_name = $1
     `, teamName)
 	if err != nil {
 		return nil, err
@@ -156,9 +161,8 @@ func GetTeamWithMembers(ctx context.Context, db *sql.DB, teamName string) ([]Sto
 }
 
 // создает пул реквест если его нет, если есть то ошибка
-// транзакция потому что потом сюда надо добавить ревьюеров
-func CreatePullRequest(ctx context.Context, transaction *sql.Tx, pullRequestId, title, authorId string) error {
-	_, err := transaction.ExecContext(ctx, `
+func CreatePullRequest(ctx context.Context, db someSqlQuery, pullRequestId, title, authorId string) error {
+	_, err := db.ExecContext(ctx, `
         INSERT INTO pull_requests (request_id, title, user_id, status) 
         VALUES ($1, $2, $3, 'OPEN')
     `, pullRequestId, title, authorId)
@@ -166,9 +170,8 @@ func CreatePullRequest(ctx context.Context, transaction *sql.Tx, pullRequestId, 
 }
 
 // добавляет ревьюера к пул реквесту, если уже есть то ошибка
-// транзакция потому что это должно быть атомарным с созданием пул реквеста
-func AddReviewerToPR(ctx context.Context, transaction *sql.Tx, pullRequestId, reviewerId string) error {
-	_, err := transaction.ExecContext(ctx, `
+func AddReviewerToPR(ctx context.Context, db someSqlQuery, pullRequestId, reviewerId string) error {
+	_, err := db.ExecContext(ctx, `
         INSERT INTO pull_requests_reviewers (request_id, reviewer_id) 
         VALUES ($1, $2)
     `, pullRequestId, reviewerId)
@@ -176,10 +179,9 @@ func AddReviewerToPR(ctx context.Context, transaction *sql.Tx, pullRequestId, re
 }
 
 // получает пул реквест по айди, если нет то ошибка
-// транзакция потому что мы потом будем его менять
-func GetPullRequest(ctx context.Context, transaction *sql.Tx, pullRequestId string) (StoragePullRequest, error) {
+func GetPullRequest(ctx context.Context, db someSqlQuery, pullRequestId string) (StoragePullRequest, error) {
 	var pullRequest StoragePullRequest
-	err := transaction.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
         SELECT request_id, title, user_id, status, created_at, merged_at
         FROM pull_requests 
         WHERE request_id = $1
@@ -188,10 +190,9 @@ func GetPullRequest(ctx context.Context, transaction *sql.Tx, pullRequestId stri
 }
 
 // обновляет статус пул реквеста, если его нет то ошибка
-// транзакция потому что это изменение данных
-func UpdatePRStatus(ctx context.Context, transaction *sql.Tx, pullRequestId, status string) error {
+func UpdatePRStatus(ctx context.Context, db someSqlQuery, pullRequestId, status string) error {
 	if status == "MERGED" {
-		_, err := transaction.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, `
             UPDATE pull_requests 
             SET status = $1, merged_at = NOW()
             WHERE request_id = $2
@@ -199,7 +200,7 @@ func UpdatePRStatus(ctx context.Context, transaction *sql.Tx, pullRequestId, sta
 		return err
 	}
 
-	_, err := transaction.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         UPDATE pull_requests 
         SET status = $1 
         WHERE request_id = $2
@@ -208,7 +209,7 @@ func UpdatePRStatus(ctx context.Context, transaction *sql.Tx, pullRequestId, sta
 }
 
 // получает всех ревьюеров пул реквеста, если пул реквеста нет то пустой слайс
-func GetPRReviewers(ctx context.Context, db *sql.DB, pullRequestId string) ([]string, error) {
+func GetPRReviewers(ctx context.Context, db someSqlQuery, pullRequestId string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
         SELECT reviewer_id 
         FROM pull_requests_reviewers 
@@ -231,9 +232,8 @@ func GetPRReviewers(ctx context.Context, db *sql.DB, pullRequestId string) ([]st
 }
 
 // удаляет ревьюера из пул реквеста и добавляет нового
-// транзакция потому что это два изменения которые должны быть атомарными
-func ReplacePRReviewer(ctx context.Context, transaction *sql.Tx, pullRequestId, oldReviewerId, newReviewerId string) error {
-	_, err := transaction.ExecContext(ctx, `
+func ReplacePRReviewer(ctx context.Context, db someSqlQuery, pullRequestId, oldReviewerId, newReviewerId string) error {
+	_, err := db.ExecContext(ctx, `
         DELETE FROM pull_requests_reviewers 
         WHERE request_id = $1 AND reviewer_id = $2
     `, pullRequestId, oldReviewerId)
@@ -241,7 +241,7 @@ func ReplacePRReviewer(ctx context.Context, transaction *sql.Tx, pullRequestId, 
 		return err
 	}
 
-	_, err = transaction.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         INSERT INTO pull_requests_reviewers (request_id, reviewer_id) 
         VALUES ($1, $2)
     `, pullRequestId, newReviewerId)

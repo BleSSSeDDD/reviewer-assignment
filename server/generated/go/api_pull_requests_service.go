@@ -9,14 +9,10 @@ import (
 	"github.com/BleSSSeDDD/reviewer-assignment/server/internal/storage"
 )
 
-// PullRequestsAPIService is a service that implements the logic for the PullRequestsAPIServicer
-// This service should implement the business logic for every endpoint for the PullRequestsAPI API.
-// Include any external packages or services that will be required by this service.
 type PullRequestsAPIService struct {
 	db *sql.DB
 }
 
-// NewPullRequestsAPIService creates a default api service
 func NewPullRequestsAPIService(db *sql.DB) *PullRequestsAPIService {
 	return &PullRequestsAPIService{db: db}
 }
@@ -28,7 +24,7 @@ func min(a, b int) int {
 	return b
 }
 
-// PullRequestCreatePost - Создать PullRequest и автоматически назначить до 2 ревьюверов из команды автора
+// PullRequestCreatePost - Создать PR и автоматически назначить до 2 ревьюверов из команды автора
 func (s *PullRequestsAPIService) PullRequestCreatePost(ctx context.Context, pullRequestCreatePostRequest PullRequestCreatePostRequest) (ImplResponse, error) {
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -46,7 +42,7 @@ func (s *PullRequestsAPIService) PullRequestCreatePost(ctx context.Context, pull
 		}), nil
 	}
 
-	teamMembers, err := storage.GetTeamWithMembers(ctx, s.db, authorUser.TeamName)
+	teamMembers, err := storage.GetTeamWithMembers(ctx, transaction, authorUser.TeamName)
 	if err != nil {
 		return Response(404, ErrorResponse{
 			Error: ErrorResponseError{
@@ -63,8 +59,6 @@ func (s *PullRequestsAPIService) PullRequestCreatePost(ctx context.Context, pull
 		}
 	}
 
-	// чтобы случайно выбрать из юзеров, которые не автор пул реквеста делаем слайс,
-	// потом его перемешиваем и берем двух первых, либо если там один всего то его
 	var selectedReviewers []storage.StorageUser
 	if len(availableReviewers) > 0 {
 		rand.Shuffle(len(availableReviewers), func(i, j int) {
@@ -94,14 +88,6 @@ func (s *PullRequestsAPIService) PullRequestCreatePost(ctx context.Context, pull
 				Error: ErrorResponseError{
 					Code:    "VALUE_TOO_LONG",
 					Message: "PR id or title too long, check maximum length limits",
-				},
-			}), nil
-		}
-		if strings.Contains(err.Error(), "violates foreign key constraint") {
-			return Response(404, ErrorResponse{
-				Error: ErrorResponseError{
-					Code:    "AUTHOR_NOT_FOUND",
-					Message: "author not found",
 				},
 			}), nil
 		}
@@ -142,7 +128,7 @@ func (s *PullRequestsAPIService) PullRequestCreatePost(ctx context.Context, pull
 	}), nil
 }
 
-// PullRequestMergePost - Пометить PullRequest как MERGED (идемпотентная операция)
+// PullRequestMergePost - Пометить PR как MERGED (идемпотентная операция)
 func (s *PullRequestsAPIService) PullRequestMergePost(ctx context.Context, pullRequestMergePostRequest PullRequestMergePostRequest) (ImplResponse, error) {
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -161,7 +147,7 @@ func (s *PullRequestsAPIService) PullRequestMergePost(ctx context.Context, pullR
 	}
 
 	if storagePullRequest.Status == "MERGED" {
-		reviewers, err := storage.GetPRReviewers(ctx, s.db, storagePullRequest.PullRequestId)
+		reviewers, err := storage.GetPRReviewers(ctx, transaction, storagePullRequest.PullRequestId)
 		if err != nil {
 			return Response(500, nil), err
 		}
@@ -191,7 +177,7 @@ func (s *PullRequestsAPIService) PullRequestMergePost(ctx context.Context, pullR
 		return Response(500, nil), err
 	}
 
-	reviewers, err := storage.GetPRReviewers(ctx, s.db, mergedPullRequest.PullRequestId)
+	reviewers, err := storage.GetPRReviewers(ctx, transaction, mergedPullRequest.PullRequestId)
 	if err != nil {
 		return Response(500, nil), err
 	}
@@ -252,20 +238,12 @@ func (s *PullRequestsAPIService) PullRequestReassignPost(ctx context.Context, pu
 		}), nil
 	}
 
-	currentReviewers, err := storage.GetPRReviewers(ctx, s.db, storagePullRequest.PullRequestId)
+	currentReviewers, err := storage.GetPRReviewers(ctx, transaction, storagePullRequest.PullRequestId)
 	if err != nil {
 		return Response(500, nil), err
 	}
 
-	isAssigned := false
-	for _, reviewer := range currentReviewers {
-		if reviewer == pullRequestReassignPostRequest.OldUserId {
-			isAssigned = true
-			break
-		}
-	}
-
-	if !isAssigned {
+	if !contains(currentReviewers, pullRequestReassignPostRequest.OldUserId) {
 		return Response(409, ErrorResponse{
 			Error: ErrorResponseError{
 				Code:    "NOT_ASSIGNED",
@@ -274,7 +252,6 @@ func (s *PullRequestsAPIService) PullRequestReassignPost(ctx context.Context, pu
 		}), nil
 	}
 
-	// берем команду старого ревьюера и получаем активных пользователей из его команды
 	oldReviewerUser, err := storage.GetUser(ctx, transaction, pullRequestReassignPostRequest.OldUserId)
 	if err != nil {
 		return Response(404, ErrorResponse{
@@ -285,7 +262,7 @@ func (s *PullRequestsAPIService) PullRequestReassignPost(ctx context.Context, pu
 		}), nil
 	}
 
-	teamMembers, err := storage.GetTeamWithMembers(ctx, s.db, oldReviewerUser.TeamName)
+	teamMembers, err := storage.GetTeamWithMembers(ctx, transaction, oldReviewerUser.TeamName)
 	if err != nil {
 		return Response(500, nil), err
 	}
@@ -309,7 +286,6 @@ func (s *PullRequestsAPIService) PullRequestReassignPost(ctx context.Context, pu
 		}), nil
 	}
 
-	// он всего один, перетасовывать слайс не надо
 	newReviewerUser := availableCandidates[rand.Intn(len(availableCandidates))]
 	err = storage.ReplacePRReviewer(ctx, transaction,
 		pullRequestReassignPostRequest.PullRequestId,
@@ -320,7 +296,7 @@ func (s *PullRequestsAPIService) PullRequestReassignPost(ctx context.Context, pu
 		return Response(500, nil), err
 	}
 
-	updatedReviewers, err := storage.GetPRReviewers(ctx, s.db, storagePullRequest.PullRequestId)
+	updatedReviewers, err := storage.GetPRReviewers(ctx, transaction, storagePullRequest.PullRequestId)
 	if err != nil {
 		return Response(500, nil), err
 	}

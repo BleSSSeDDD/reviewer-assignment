@@ -8,14 +8,19 @@ import (
 	"github.com/BleSSSeDDD/reviewer-assignment/server/internal/storage"
 )
 
+// TeamsAPIService is a service that implements the logic for the TeamsAPIService
+// This service should implement the business logic for every endpoint for the TeamsAPI API.
+// Include any external packages or services that will be required by this service.
 type TeamsAPIService struct {
 	db *sql.DB
 }
 
+// NewTeamsAPIService creates a default api service
 func NewTeamsAPIService(db *sql.DB) *TeamsAPIService {
 	return &TeamsAPIService{db: db}
 }
 
+// TeamAddPost - Создать команду с участниками (создаёт/обновляет пользователей)
 func (s *TeamsAPIService) TeamAddPost(ctx context.Context, team Team) (ImplResponse, error) {
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -45,7 +50,7 @@ func (s *TeamsAPIService) TeamAddPost(ctx context.Context, team Team) (ImplRespo
 	}
 
 	for _, member := range team.Members {
-		err = storage.CreateOrUpdateUser(ctx, transaction, member.UserId, member.Username, member.IsActive)
+		err = storage.CreateOrUpdateUser(ctx, transaction, member.UserId, member.Username, team.TeamName, member.IsActive)
 		if err != nil {
 			if strings.Contains(err.Error(), "value too long") {
 				return Response(400, ErrorResponse{
@@ -58,10 +63,6 @@ func (s *TeamsAPIService) TeamAddPost(ctx context.Context, team Team) (ImplRespo
 			return Response(500, nil), err
 		}
 
-		err = storage.AddUserToTeam(ctx, transaction, member.UserId, team.TeamName)
-		if err != nil {
-			return Response(500, nil), err
-		}
 	}
 
 	err = transaction.Commit()
@@ -74,19 +75,24 @@ func (s *TeamsAPIService) TeamAddPost(ctx context.Context, team Team) (ImplRespo
 	}), nil
 }
 
+// TeamGetGet - Получить команду с участниками
 func (s *TeamsAPIService) TeamGetGet(ctx context.Context, teamName string) (ImplResponse, error) {
-	storageMembers, err := storage.GetTeamWithMembers(ctx, s.db, teamName)
+	exists, err := storage.TeamExists(ctx, s.db, teamName)
 	if err != nil {
 		return Response(500, nil), err
 	}
-
-	if len(storageMembers) == 0 {
+	if !exists {
 		return Response(404, ErrorResponse{
 			Error: ErrorResponseError{
 				Code:    "NOT_FOUND",
 				Message: "team not found",
 			},
 		}), nil
+	}
+
+	storageMembers, err := storage.GetTeamWithMembers(ctx, s.db, teamName)
+	if err != nil {
+		return Response(500, nil), err
 	}
 
 	var openapiMembers []TeamMember

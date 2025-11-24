@@ -1,18 +1,15 @@
-CREATE TABLE users(
-    user_id VARCHAR(100) PRIMARY KEY, -- длина до 100 символов чтобы обезопасить бд от огромных строк
-    user_name VARCHAR(100) NOT NULL, 
-    is_active BOOLEAN NOT NULL DEFAULT true
-);
-
+-- таблица для команд нужна, чтобы не возникло ситуации, когда два одновременных запроса с одинаковой
+-- командой и разными пользователями не создавали две разные группы пользователей с одинковым названием команды
 CREATE TABLE teams(
     team_name VARCHAR(100) PRIMARY KEY
 );
 
--- связывает юзеров с их командами, один юзер может быть в нескольких командах
-CREATE TABLE members_of_teams(
-    user_id VARCHAR(100) REFERENCES users(user_id),
-    team_name VARCHAR(100) REFERENCES teams(team_name),
-    PRIMARY KEY (user_id, team_name)
+
+CREATE TABLE users(
+    user_id VARCHAR(100) PRIMARY KEY, -- длина до 100 символов чтобы обезопасить бд от огромных строк
+    user_name VARCHAR(100) NOT NULL, 
+    team_name VARCHAR(100) NOT NULL REFERENCES teams(team_name) DEFERRABLE INITIALLY DEFERRED,
+    is_active BOOLEAN NOT NULL DEFAULT true
 );
 
 -- удаления юзеров и команд не предусмотрено
