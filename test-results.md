@@ -18,6 +18,7 @@ latency p95: 6.38ms
 проверки: 100% успешно 
 
 вывод k6:
+
   █ THRESHOLDS
 
     http_req_duration
@@ -206,6 +207,7 @@ latency p95: 6.21s
 итерации: 42 в секунду
 
 вывод k6:
+
   █ THRESHOLDS
 
     http_req_duration
