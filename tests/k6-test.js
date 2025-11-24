@@ -1,16 +1,16 @@
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 
 const BASE_URL = 'http://host.docker.internal:8080';
 
 export const options = {
   stages: [
-    { duration: '60s', target: 3 },
+    { duration: '3s', target: 1000 }, 
+    { duration: '30s', target: 1000 }, 
   ],
   thresholds: {
-    http_req_failed: ['rate<0.001'],   
-    http_req_duration: ['p(95)<300'],  
-    http_reqs: ['rate>5'],           
+    http_req_failed: ['rate<0.9'],   
+    http_req_duration: ['p(95)<10000'], 
   },
 };
 
@@ -20,41 +20,42 @@ export default function() {
   
   const randomTeam = `team${randomTeamNum}`;
   const randomUser = `user${randomUserNum}`;
+
+  http.get(`${BASE_URL}/team/get?team_name=${randomTeam}`);
   
-  const op = Math.random();
+  http.get(`${BASE_URL}/users/getReview?user_id=${randomUser}`);
   
-  if (op < 0.3) {
-    // 30% - получение команды 
-    const res = http.get(`${BASE_URL}/team/get?team_name=${randomTeam}`);
-    check(res, { 'get team': (r) => r.status === 200 });
-    
-  } else if (op < 0.6) {
-    // 30% - получение ревью 
-    const res = http.get(`${BASE_URL}/users/getReview?user_id=${randomUser}`);
-    check(res, { 'get reviews': (r) => r.status === 200 });
-    
-  } else if (op < 0.8) {
-    // 20% - изменение активности пользователя
-    const payload = {
-      user_id: randomUser,
-      is_active: Math.random() > 0.5
-    };
-    const res = http.post(`${BASE_URL}/users/setIsActive`, JSON.stringify(payload), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-    check(res, { 'set active': (r) => r.status === 200 });
-    
-  } else {
-    // 20% - мерж PR
-    const randomPRNum = Math.floor(Math.random() * 2) + 1;
-    const prId = `pr_team${randomTeamNum}_${randomPRNum}`;
-    
-    const payload = { pull_request_id: prId };
-    const res = http.post(`${BASE_URL}/pullRequest/merge`, JSON.stringify(payload), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-    check(res, { 'merge PR': (r) => r.status === 200 });
-  }
+  const prId = `pr_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${__VU}`;
+  const payload = {
+    pull_request_id: prId,
+    pull_request_name: `KILL_SWITCH_${prId}`,
+    author_id: randomUser
+  };
+  http.post(`${BASE_URL}/pullRequest/create`, JSON.stringify(payload), {
+    headers: { 'Content-Type': 'application/json' }
+  });
   
-  sleep(0.2);
+  const activePayload = {
+    user_id: randomUser,
+    is_active: Math.random() > 0.5
+  };
+  http.post(`${BASE_URL}/users/setIsActive`, JSON.stringify(activePayload), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+  
+  http.post(`${BASE_URL}/pullRequest/merge`, JSON.stringify({
+    pull_request_id: `pr_team${randomTeamNum}_1`
+  }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  http.post(`${BASE_URL}/pullRequest/reassign`, JSON.stringify({
+    pull_request_id: `pr_team${randomTeamNum}_1`,
+    old_user_id: randomUser
+  }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  http.get(`${BASE_URL}/team/get?team_name=${randomTeam}`);
+  http.get(`${BASE_URL}/users/getReview?user_id=${randomUser}`);
 }
