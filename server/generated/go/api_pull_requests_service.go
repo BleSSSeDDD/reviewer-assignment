@@ -17,13 +17,6 @@ func NewPullRequestsAPIService(db *sql.DB) *PullRequestsAPIService {
 	return &PullRequestsAPIService{db: db}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // PullRequestCreatePost - Создать PR и автоматически назначить до 2 ревьюверов из команды автора
 func (s *PullRequestsAPIService) PullRequestCreatePost(ctx context.Context, pullRequestCreatePostRequest PullRequestCreatePostRequest) (ImplResponse, error) {
 	transaction, err := s.db.BeginTx(ctx, nil)
@@ -94,7 +87,7 @@ func (s *PullRequestsAPIService) PullRequestCreatePost(ctx context.Context, pull
 		return Response(500, nil), err
 	}
 
-	var assignedReviewerIds []string
+	assignedReviewerIds := make([]string, 0)
 	for _, reviewer := range selectedReviewers {
 		err = storage.AddReviewerToPR(ctx, transaction, pullRequestCreatePostRequest.PullRequestId, reviewer.UserId)
 		if err != nil {
