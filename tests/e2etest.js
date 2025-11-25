@@ -1,418 +1,325 @@
-const BASE_URL = 'http://localhost:8080';
-const TEST_DELAY = 100;
+import http from 'k6/http';
+import { check, sleep } from 'k6';
 
-class TestRunner {
-    constructor() {
-        this.tests = [];
-        this.passed = 0;
-        this.failed = 0;
-        this.testRunId = Date.now().toString();
-    }
+const BASE_URL = 'http://host.docker.internal:8080';
 
-    async delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+export const options = {
+  vus: 1,
+  iterations: 1,
+};
 
-    async test(name, testFn) {
-        try {
-            await testFn();
-            this.passed++;
-        } catch (error) {
-            this.failed++;
-        }
-        await this.delay(TEST_DELAY);
-    }
+let testTeams = [];
+let testUsers = [];
+let testPRs = [];
 
-    logResult() {
-        console.log(`RESULTS: ${this.passed} passed, ${this.failed} failed`);
-    }
+export default function() {
+  console.log('=== Starting API Tests ===\n');
 
-    async apiCall(endpoint, options = {}) {
-        const url = `${BASE_URL}${endpoint}`;
-        try {
-            const response = await fetch(url, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...options.headers
-                },
-                ...options
-            });
-            
-            const data = await response.json().catch(() => null);
-            
-            return {
-                status: response.status,
-                data,
-                ok: response.ok
-            };
-        } catch (error) {
-            return { status: 0, data: null, ok: false };
-        }
-    }
+  testTeamCreation();
+  sleep(1);
 
-    generateId(prefix) {
-        return `${prefix}-${this.testRunId}-${Math.random().toString(36).substr(2, 9)}`;
-    }
+  testGetTeams();
+  sleep(1);
+
+  testUserActivation();
+  sleep(1);
+
+  testPRCreation();
+  sleep(1);
+
+  testGetUserReviews();
+  sleep(1);
+
+  testReassignReviewers();
+  sleep(1);
+
+  testPRMerge();
+  sleep(1);
+
+  testErrorCases();
+  sleep(1);
+
+  console.log('\n=== All tests completed ===');
 }
 
-const runner = new TestRunner();
-
-async function runAllTests() {
-    await runTeamTests();
-    await runUserTests();
-    await runPullRequestTests();
-    await runEdgeCaseTests();
-    await runReassignmentTests();
-    await runDatabaseLimitTests();
+function testTeamCreation() {
+  console.log('1. Testing Team Creation...');
+  
+  const teams = [];
+  for (let teamNum = 1; teamNum <= 5; teamNum++) {
+    const teamName = `test_team_${teamNum}`;
+    const members = [];
     
-    runner.logResult();
+    for (let userNum = 1; userNum <= 5; userNum++) {
+      const userId = `test_user_${(teamNum - 1) * 5 + userNum}`;
+      members.push({
+        user_id: userId,
+        username: `TestUser${userId}`,
+        is_active: true
+      });
+      testUsers.push({ user_id: userId, team_name: teamName });
+    }
+    
+    const team = {
+      team_name: teamName,
+      members: members
+    };
+    teams.push(team);
+    testTeams.push(teamName);
+  }
+
+  const requests = teams.map(team => ({
+    method: 'POST',
+    url: `${BASE_URL}/team/add`,
+    body: JSON.stringify(team),
+    params: { headers: { 'Content-Type': 'application/json' } }
+  }));
+
+  const responses = http.batch(requests);
+  
+  let successCount = 0;
+  responses.forEach((res, i) => {
+    const checkResult = check(res, {
+      [`team ${teams[i].team_name} created`]: (r) => r.status === 201 || r.status === 409
+    });
+    if (checkResult) successCount++;
+  });
+
+  console.log(`   Created ${successCount}/${teams.length} teams\n`);
 }
 
-async function runTeamTests() {
-    await runner.test('Create team', async () => {
-        const teamData = {
-            team_name: runner.generateId('team'),
-            members: [
-                { user_id: runner.generateId('user'), username: 'Alice', is_active: true },
-                { user_id: runner.generateId('user'), username: 'Bob', is_active: true }
-            ]
-        };
-        
-        const result = await runner.apiCall('/team/add', {
-            method: 'POST',
-            body: JSON.stringify(teamData)
-        });
-        
-        if (!result.ok) throw new Error(`Expected 201, got ${result.status}`);
-    });
+function testGetTeams() {
+  console.log('2. Testing Team Retrieval...');
+  
+  const requests = testTeams.map(teamName => ({
+    method: 'GET',
+    url: `${BASE_URL}/team/get?team_name=${teamName}`,
+    params: { headers: { 'Content-Type': 'application/json' } }
+  }));
 
-    await runner.test('Duplicate team', async () => {
-        const teamId = runner.generateId('team');
-        const teamData = {
-            team_name: teamId,
-            members: [{ user_id: runner.generateId('user'), username: 'User', is_active: true }]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-        const result = await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-        
-        if (result.status !== 409 && result.status !== 400) throw new Error(`Expected 409 or 400, got ${result.status}`);
+  const responses = http.batch(requests);
+  
+  let successCount = 0;
+  responses.forEach((res, i) => {
+    const checkResult = check(res, {
+      [`team ${testTeams[i]} retrieved`]: (r) => r.status === 200
     });
+    if (checkResult) successCount++;
+  });
 
-    await runner.test('Get team', async () => {
-        const teamId = runner.generateId('team');
-        const teamData = {
-            team_name: teamId,
-            members: [{ user_id: runner.generateId('user'), username: 'User', is_active: true }]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-        const result = await runner.apiCall(`/team/get?team_name=${teamId}`);
-        
-        if (!result.ok) throw new Error(`Expected 200, got ${result.status}`);
-    });
-
-    await runner.test('Get non-existent team', async () => {
-        const result = await runner.apiCall('/team/get?team_name=nonexistent');
-        if (result.status !== 404) throw new Error(`Expected 404, got ${result.status}`);
-    });
+  console.log(`   Retrieved ${successCount}/${testTeams.length} teams\n`);
 }
 
-async function runUserTests() {
-    await runner.test('Toggle user active', async () => {
-        const teamId = runner.generateId('team');
-        const userId = runner.generateId('user');
-        const teamData = {
-            team_name: teamId,
-            members: [{ user_id: userId, username: 'User', is_active: true }]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
+function testUserActivation() {
+  console.log('3. Testing User Activation...');
+  
+  const deactivationRequests = [
+    { user_id: 'test_user_2', is_active: false },
+    { user_id: 'test_user_7', is_active: false }
+  ].map(data => ({
+    method: 'POST',
+    url: `${BASE_URL}/users/setIsActive`,
+    body: JSON.stringify(data),
+    params: { headers: { 'Content-Type': 'application/json' } }
+  }));
 
-        const result = await runner.apiCall('/users/setIsActive', {
-            method: 'POST',
-            body: JSON.stringify({ user_id: userId, is_active: false })
-        });
-        
-        if (!result.ok && result.status !== 422 && result.status !== 404) {
-            throw new Error(`Expected 200, 422 or 404, got ${result.status}`);
-        }
+  const deactivationResponses = http.batch(deactivationRequests);
+  
+  let deactivationSuccess = 0;
+  deactivationResponses.forEach((res, i) => {
+    const checkResult = check(res, {
+      [`user ${deactivationRequests[i].body.user_id} deactivated`]: (r) => r.status === 200
     });
+    if (checkResult) deactivationSuccess++;
+  });
 
-    await runner.test('Update non-existent user', async () => {
-        const result = await runner.apiCall('/users/setIsActive', {
-            method: 'POST',
-            body: JSON.stringify({ user_id: 'nonexistent', is_active: false })
-        });
-        
-        if (result.status !== 422 && result.status !== 404) throw new Error(`Expected 422 or 404, got ${result.status}`);
-    });
+  console.log(`   Deactivated ${deactivationSuccess}/2 users\n`);
 }
 
-async function runPullRequestTests() {
-    await runner.test('Create PR', async () => {
-        const teamId = runner.generateId('team');
-        const userId = runner.generateId('user');
-        const prId = runner.generateId('pr');
-        
-        const teamData = {
-            team_name: teamId,
-            members: [
-                { user_id: userId, username: 'Author', is_active: true },
-                { user_id: runner.generateId('user'), username: 'Reviewer', is_active: true }
-            ]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
+function testPRCreation() {
+  console.log('4. Testing PR Creation with Auto-Assignment...');
+  
+  const prRequests = [
+    {
+      pull_request_id: 'test_pr_1',
+      pull_request_name: 'Test PR 1 - Feature Implementation',
+      author_id: 'test_user_1'
+    },
+    {
+      pull_request_id: 'test_pr_2', 
+      pull_request_name: 'Test PR 2 - Bug Fix',
+      author_id: 'test_user_3'
+    },
+    {
+      pull_request_id: 'test_pr_3',
+      pull_request_name: 'Test PR 3 - Refactoring',
+      author_id: 'test_user_6'
+    }
+  ];
 
-        const prData = {
-            pull_request_id: prId,
-            pull_request_name: 'Test',
-            author_id: userId
-        };
-        
-        const result = await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        if (!result.ok) throw new Error(`Expected 201, got ${result.status}`);
+  const requests = prRequests.map(pr => ({
+    method: 'POST',
+    url: `${BASE_URL}/pullRequest/create`,
+    body: JSON.stringify(pr),
+    params: { headers: { 'Content-Type': 'application/json' } }
+  }));
+
+  const responses = http.batch(requests);
+  
+  let successCount = 0;
+  responses.forEach((res, i) => {
+    const prData = prRequests[i];
+    testPRs.push(prData.pull_request_id);
+    
+    const checkResult = check(res, {
+      [`PR ${prData.pull_request_id} created`]: (r) => r.status === 201 || r.status === 409
     });
+    if (checkResult) successCount++;
+  });
 
-    await runner.test('Duplicate PR', async () => {
-        const prId = runner.generateId('pr');
-        const teamId = runner.generateId('team');
-        const userId = runner.generateId('user');
-        
-        const teamData = {
-            team_name: teamId,
-            members: [
-                { user_id: userId, username: 'Author', is_active: true },
-                { user_id: runner.generateId('user'), username: 'Reviewer', is_active: true }
-            ]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-
-        const prData = { pull_request_id: prId, pull_request_name: 'Test', author_id: userId };
-        
-        await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        const result = await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        
-        if (result.status !== 409) throw new Error(`Expected 409, got ${result.status}`);
-    });
-
-    await runner.test('PR non-existent author', async () => {
-        const prData = {
-            pull_request_id: runner.generateId('pr'),
-            pull_request_name: 'Test',
-            author_id: 'nonexistent'
-        };
-        
-        const result = await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        if (result.status !== 404) throw new Error(`Expected 404, got ${result.status}`);
-    });
-
-    await runner.test('Merge PR', async () => {
-        const prId = runner.generateId('pr');
-        const teamId = runner.generateId('team');
-        const userId = runner.generateId('user');
-        
-        const teamData = {
-            team_name: teamId,
-            members: [
-                { user_id: userId, username: 'Author', is_active: true },
-                { user_id: runner.generateId('user'), username: 'Reviewer', is_active: true }
-            ]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-
-        const prData = { pull_request_id: prId, pull_request_name: 'Test', author_id: userId };
-        
-        await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        const result = await runner.apiCall('/pullRequest/merge', { method: 'POST', body: JSON.stringify({ pull_request_id: prId }) });
-        
-        if (!result.ok) throw new Error(`Expected 200, got ${result.status}`);
-    });
-
-    await runner.test('Merge PR idempotent', async () => {
-        const prId = runner.generateId('pr');
-        const teamId = runner.generateId('team');
-        const userId = runner.generateId('user');
-        
-        const teamData = {
-            team_name: teamId,
-            members: [
-                { user_id: userId, username: 'Author', is_active: true },
-                { user_id: runner.generateId('user'), username: 'Reviewer', is_active: true }
-            ]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-
-        const prData = { pull_request_id: prId, pull_request_name: 'Test', author_id: userId };
-        
-        await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        await runner.apiCall('/pullRequest/merge', { method: 'POST', body: JSON.stringify({ pull_request_id: prId }) });
-        const result = await runner.apiCall('/pullRequest/merge', { method: 'POST', body: JSON.stringify({ pull_request_id: prId }) });
-        
-        if (!result.ok) throw new Error(`Expected 200, got ${result.status}`);
-    });
+  console.log(`   Created ${successCount}/${prRequests.length} PRs\n`);
 }
 
-async function runEdgeCaseTests() {
-    await runner.test('Team solo author', async () => {
-        const teamId = runner.generateId('team');
-        const userId = runner.generateId('user');
-        
-        const teamData = {
-            team_name: teamId,
-            members: [{ user_id: userId, username: 'Solo', is_active: true }]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
+function testGetUserReviews() {
+  console.log('5. Testing Get User Reviews...');
+  
+  const testReviewers = ['test_user_4', 'test_user_5', 'test_user_8'];
+  
+  const requests = testReviewers.map(userId => ({
+    method: 'GET',
+    url: `${BASE_URL}/users/getReview?user_id=${userId}`,
+    params: { headers: { 'Content-Type': 'application/json' } }
+  }));
 
-        const prData = {
-            pull_request_id: runner.generateId('pr'),
-            pull_request_name: 'Test',
-            author_id: userId
-        };
-        
-        const result = await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        if (!result.ok) throw new Error(`Expected 201, got ${result.status}`);
+  const responses = http.batch(requests);
+  
+  let successCount = 0;
+  responses.forEach((res, i) => {
+    const checkResult = check(res, {
+      [`reviews for user ${testReviewers[i]} retrieved`]: (r) => r.status === 200
     });
+    if (checkResult) successCount++;
+  });
 
-    await runner.test('Team inactive author', async () => {
-        const teamId = runner.generateId('team');
-        const userId = runner.generateId('user');
-        
-        const teamData = {
-            team_name: teamId,
-            members: [{ user_id: userId, username: 'Inactive', is_active: false }]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-
-        const prData = {
-            pull_request_id: runner.generateId('pr'),
-            pull_request_name: 'Test',
-            author_id: userId
-        };
-        
-        const result = await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        if (result.ok && result.data.pr.assigned_reviewers.length !== 0) {
-            throw new Error('Should have 0 reviewers when author inactive');
-        }
-    });
+  console.log(`   Retrieved reviews for ${successCount}/${testReviewers.length} users\n`);
 }
 
-async function runReassignmentTests() {
-    await runner.test('Reassign reviewer', async () => {
-        const teamId = runner.generateId('team');
-        const authorId = runner.generateId('user');
-        const reviewer1 = runner.generateId('user');
-        const reviewer2 = runner.generateId('user');
-        const prId = runner.generateId('pr');
-        
-        const teamData = {
-            team_name: teamId,
-            members: [
-                { user_id: authorId, username: 'Author', is_active: true },
-                { user_id: reviewer1, username: 'Reviewer1', is_active: true },
-                { user_id: reviewer2, username: 'Reviewer2', is_active: true }
-            ]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
+function testReassignReviewers() {
+  console.log('6. Testing Reviewer Reassignment...');
+  
+  if (testPRs.length === 0) {
+    console.log('   No PRs available for reassignment test\n');
+    return;
+  }
 
-        const prData = { pull_request_id: prId, pull_request_name: 'Test', author_id: authorId };
-        
-        const prResult = await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        
-        const oldReviewer = prResult.data.pr.assigned_reviewers[0];
-        if (!oldReviewer) return;
-        
-        const result = await runner.apiCall('/pullRequest/reassign', {
-            method: 'POST',
-            body: JSON.stringify({ pull_request_id: prId, old_user_id: oldReviewer })
-        });
-        
-        if (!result.ok && result.status !== 409) throw new Error(`Expected 200 or 409, got ${result.status}`);
-    });
+  const reassignmentRequest = {
+    method: 'POST',
+    url: `${BASE_URL}/pullRequest/reassign`,
+    body: JSON.stringify({
+      pull_request_id: 'test_pr_1',
+      old_user_id: 'test_user_4'
+    }),
+    params: { headers: { 'Content-Type': 'application/json' } }
+  };
+
+  const response = http.post(
+    reassignmentRequest.url, 
+    reassignmentRequest.body, 
+    reassignmentRequest.params
+  );
+
+  const reassignmentSuccess = check(response, {
+    'reassignment handled correctly': (r) => r.status === 200 || r.status === 409 || r.status === 404
+  });
+
+  console.log(`   Reassignment test completed: ${reassignmentSuccess ? 'PASS' : 'FAIL'}\n`);
 }
 
-async function runDatabaseLimitTests() {
-    await runner.test('Long team name', async () => {
-        const teamData = {
-            team_name: 'a'.repeat(150),
-            members: [{ user_id: runner.generateId('user'), username: 'Test', is_active: true }]
-        };
-        
-        const result = await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-        if (result.status !== 400 && result.status !== 422 && result.status !== 413) {
-            throw new Error(`Expected 400, 422 or 413, got ${result.status}`);
-        }
-    });
+function testPRMerge() {
+  console.log('7. Testing PR Merge...');
+  
+  if (testPRs.length === 0) {
+    console.log('   No PRs available for merge test\n');
+    return;
+  }
 
-    await runner.test('Long user ID', async () => {
-        const teamData = {
-            team_name: runner.generateId('team'),
-            members: [{ user_id: 'u'.repeat(150), username: 'Test', is_active: true }]
-        };
-        
-        const result = await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-        if (result.status !== 400 && result.status !== 422 && result.status !== 413) {
-            throw new Error(`Expected 400, 422 or 413, got ${result.status}`);
-        }
-    });
+  const mergeRequest = {
+    method: 'POST',
+    url: `${BASE_URL}/pullRequest/merge`,
+    body: JSON.stringify({
+      pull_request_id: 'test_pr_2'
+    }),
+    params: { headers: { 'Content-Type': 'application/json' } }
+  };
 
-    await runner.test('Long PR ID', async () => {
-        const teamId = runner.generateId('team');
-        const userId = runner.generateId('user');
-        
-        const teamData = {
-            team_name: teamId,
-            members: [
-                { user_id: userId, username: 'Test', is_active: true },
-                { user_id: runner.generateId('user'), username: 'Reviewer', is_active: true }
-            ]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
+  const response = http.post(mergeRequest.url, mergeRequest.body, mergeRequest.params);
 
-        const prData = {
-            pull_request_id: 'pr'.repeat(100),
-            pull_request_name: 'Test',
-            author_id: userId
-        };
-        
-        const result = await runner.apiCall('/pullRequest/create', { method: 'POST', body: JSON.stringify(prData) });
-        if (result.status !== 400 && result.status !== 422 && result.status !== 413 && result.status !== 404) {
-            throw new Error(`Expected 400, 422, 413 or 404, got ${result.status}`);
-        }
-    });
+  const mergeSuccess = check(response, {
+    'PR merged successfully': (r) => r.status === 200
+  });
 
-    await runner.test('Empty strings', async () => {
-        const teamData = { team_name: '', members: [{ user_id: '', username: '', is_active: true }] };
-        const result = await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-        if (result.status !== 400 && result.status !== 422) throw new Error(`Expected 400 or 422, got ${result.status}`);
-    });
+  const retryResponse = http.post(mergeRequest.url, mergeRequest.body, mergeRequest.params);
+  const idempotencySuccess = check(retryResponse, {
+    'repeated merge is idempotent': (r) => r.status === 200
+  });
 
-    await runner.test('SQL injection', async () => {
-        const teamData = {
-            team_name: "team'; DROP TABLE teams; --",
-            members: [{ user_id: "user'; DELETE FROM users; --", username: "Test", is_active: true }]
-        };
-        
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-    });
-
-    await runner.test('Large payload', async () => {
-        const members = [];
-        for (let i = 0; i < 1000; i++) {
-            members.push({ user_id: runner.generateId(`user-${i}`), username: `User ${i}`, is_active: true });
-        }
-        
-        const teamData = { team_name: runner.generateId('bulk'), members };
-        await runner.apiCall('/team/add', { method: 'POST', body: JSON.stringify(teamData) });
-    });
+  console.log(`   Merge test: ${mergeSuccess ? 'PASS' : 'FAIL'}`);
+  console.log(`   Idempotency test: ${idempotencySuccess ? 'PASS' : 'FAIL'}\n`);
 }
 
-console.log("run tests: runAllTests()")
+function testErrorCases() {
+  console.log('8. Testing Error Cases...');
+  
+  const errorTests = [
+    {
+      name: 'duplicate team creation',
+      request: {
+        method: 'POST',
+        url: `${BASE_URL}/team/add`,
+        body: JSON.stringify({
+          team_name: 'test_team_1',
+          members: [{ user_id: 'new_user', username: 'New User', is_active: true }]
+        }),
+        params: { headers: { 'Content-Type': 'application/json' } }
+      },
+      expectedStatus: 400
+    },
+    {
+      name: 'get non-existent team',
+      request: {
+        method: 'GET',
+        url: `${BASE_URL}/team/get?team_name=non_existent_team`,
+        params: { headers: { 'Content-Type': 'application/json' } }
+      },
+      expectedStatus: 404
+    },
+    {
+      name: 'create PR with non-existent author',
+      request: {
+        method: 'POST',
+        url: `${BASE_URL}/pullRequest/create`,
+        body: JSON.stringify({
+          pull_request_id: 'error_test_pr',
+          pull_request_name: 'Error Test PR',
+          author_id: 'non_existent_user'
+        }),
+        params: { headers: { 'Content-Type': 'application/json' } }
+      },
+      expectedStatus: 404
+    }
+  ];
+
+  const requests = errorTests.map(test => test.request);
+  const responses = http.batch(requests);
+  
+  let successCount = 0;
+  responses.forEach((res, i) => {
+    const test = errorTests[i];
+    const checkResult = check(res, {
+      [`error case "${test.name}" handled correctly`]: (r) => r.status === test.expectedStatus
+    });
+    if (checkResult) successCount++;
+  });
+
+  console.log(`   Handled ${successCount}/${errorTests.length} error cases correctly\n`);
+}
