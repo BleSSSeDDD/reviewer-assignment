@@ -17,11 +17,9 @@ services:
       timeout: 5s
       retries: 5
 
-  app:
-    build: 
-      context: ./
-      dockerfile: Dockerfile
-    container_name: reviewer-app
+  server:
+    image: blessseddd/reviewer-assignment:latest  
+    container_name: reviewer-assignment
     ports:
       - "8080:8080"
     environment:
