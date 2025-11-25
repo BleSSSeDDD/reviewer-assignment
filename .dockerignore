@@ -1,0 +1,11 @@
+tests
+.dockerignore
+.gitignore
+docker-compose.yml
+Dockerfile
+openapi.yml
+README.md
+test-results.md
+server/generated/.openapi-generator
+server/generated/api
+server/generated/.openapi-generator-ignore
