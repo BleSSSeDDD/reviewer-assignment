@@ -12,7 +12,6 @@ CREATE TABLE users(
     is_active BOOLEAN NOT NULL DEFAULT true
 );
 
--- удаления юзеров и команд не предусмотрено
 CREATE TABLE pull_requests(
     request_id VARCHAR(100) PRIMARY KEY,
     title VARCHAR(500) NOT NULL,
@@ -31,3 +30,9 @@ CREATE TABLE pull_requests_reviewers(
     PRIMARY KEY (request_id, reviewer_id)
 );
 
+-- индекс нужен для ускорения:
+-- выборки активных пользователей команды
+-- выборки ревьюеров при создании PR
+-- переназначения ревьюеров
+-- особенно хорошо будет заметна разница, когда в командах будет по 100+ пользователей
+CREATE INDEX idx_users_team_active ON users(team_name, is_active);
