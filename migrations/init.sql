@@ -4,7 +4,6 @@ CREATE TABLE teams(
     team_name VARCHAR(100) PRIMARY KEY
 );
 
-
 CREATE TABLE users(
     user_id VARCHAR(100) PRIMARY KEY, -- длина до 100 символов чтобы обезопасить бд от огромных строк
     user_name VARCHAR(100) NOT NULL, 
